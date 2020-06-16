@@ -7,7 +7,7 @@
 #ifdef _WIN64
 #define WINVER 0x502
 #else
-#define WINVER 0x400
+#define WINVER 0x0600
 #endif
 
 #include <windows.h>
@@ -18,7 +18,9 @@
 #endif
 #include <aclapi.h>
 #include <sddl.h>
-//#include <tchar.h>
+#include <tchar.h>
+#include <stdlib.h>
+#include <winnls.h>
 
 /*****************************************************************************
  GLOBAL VARIABLES
@@ -315,6 +317,109 @@ PUBLIC_FUNCTION(SetEnvVar)
 	
 	
 	LocalFree(param2);
+	LocalFree(param);
+	pushstring(retstr);
+
+}
+PUBLIC_FUNCTION_END
+
+
+//convert WideChar to ANSI
+static char * convWcToLocal(wchar_t *wstr)
+{
+	if (wstr == NULL) return NULL;
+	int len;
+	len = WideCharToMultiByte(CP_ACP, 0, wstr, -1, NULL, 0, NULL, NULL);
+	if (len == 0) return NULL;
+
+	//char *p = (char*)malloc(len + 1);
+	char *p = (char*)LocalAlloc(len + 1);
+	len = WideCharToMultiByte(CP_ACP, 0, wstr, -1, p, len + 1, NULL, NULL);
+
+	return p;
+
+}
+
+static HWND id=0;
+#define MAXLOCALE 1000
+static char* locales[MAXLOCALE];
+static int currId = 0;
+
+BOOL _stdcall myEnumLocalesProc(_In_ LPTSTR lpLocaleString)
+{
+
+	LCID  lcid;
+	char* endptr = 0;
+	if (id == 0) return FALSE;
+
+	lcid = strtol(lpLocaleString, &endptr, 16);
+
+	WCHAR strNameBuffer[LOCALE_NAME_MAX_LENGTH];
+	DWORD error = ERROR_SUCCESS;
+
+	// Get the name for locale 
+	if (LCIDToLocaleName(lcid, strNameBuffer, LOCALE_NAME_MAX_LENGTH, 0) == 0)//LOCALE_ALLOW_NEUTRAL_NAMES
+	{
+		// There was an error
+		error = GetLastError();
+	}
+	else
+	{
+		// Success, display the locale name we found, add string to array
+		char *p = convWcToLocal(strNameBuffer);//convert name to ANSI, convWcToLocal function allocates memory 
+		if (p){
+			//SendMessage(id, CB_ADDSTRING, 0, (LPARAM)((LPSTR)p));
+			if (currId < MAXLOCALE){
+				locales[currId] = p;
+				currId++;
+			}
+			
+		}
+	}
+
+	return TRUE;
+
+}
+
+
+//callback sort function
+int pcompare(const void *arg1, const void *arg2)
+{
+	/* Compare all of both strings: */
+	return _stricmp(*(char**)arg1, *(char**)arg2);
+}
+
+/* 
+setLocaleList function fill locale values to ComboBox
+parameter -  HWND of ComboBox ( returns NSD_CreateDropList)
+
+Example:
+${NSD_CreateDropList} 72u 30u 100u 12u ""
+Pop $Locale
+AddToPath::setLocaleList "$Locale"
+*/
+PUBLIC_FUNCTION(setLocaleList)
+{
+	TCHAR *retstr = TEXT("error");
+	TCHAR* param = (TCHAR*)LocalAlloc(g_string_size*sizeof(TCHAR));
+	popstring(param);
+	//popint();
+	if (param){
+		id = (HWND)myatoi(param);
+		if (id > 0){
+			currId = 0;//current index in the locales array
+			EnumSystemLocalesA(myEnumLocalesProc, LCID_INSTALLED);//fill locales array
+			qsort((void *)locales, (size_t)currId, sizeof(char *), pcompare);// in the Windows Server 2008 the array is not sorted
+			for(int i = 0; i < currId; i++){
+				SendMessage(id, CB_ADDSTRING, 0, (LPARAM)((LPSTR)locales[i]));// fill ComboBox
+				LocalFree(locales[i]);//free memory for locale name
+			}
+
+
+		}
+		retstr = TEXT("ok");
+	}
+
 	LocalFree(param);
 	pushstring(retstr);
 
